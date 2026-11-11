@@ -52,6 +52,8 @@ def main(argv: list[str]) -> int:
 
     times: list[float] = []
     seen: dict[str, list[bool]] = {"A": [], "B": []}
+    activity: list[float] = []
+    prev_gray = None
     index = 0
     while True:
         ok, frame = cap.read()
@@ -64,6 +66,13 @@ def main(argv: list[str]) -> int:
             times.append(ts)
             for side in ("A", "B"):
                 seen[side].append(side in present)
+            # 画面活跃度：比赛进行中两人都在动，死球间歇几乎静止，
+            # 用它把"没在打球"的帧排除掉，否则覆盖率被间歇稀释。
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            if prev_gray is not None:
+                activity.append(float(np.abs(gray.astype("int16")
+                                             - prev_gray.astype("int16")).mean()))
+            prev_gray = gray
         index += 1
     cap.release()
     adapter.close()
@@ -99,6 +108,23 @@ def main(argv: list[str]) -> int:
 
     both = sum(1 for a, b in zip(seen["A"], seen["B"]) if a and b) / max(len(times), 1)
     stats["两侧同时检出率"] = round(both, 4)
+
+    # 只统计"在打球"的帧：画面活跃度前 55%
+    if activity:
+        arr = np.array(activity, dtype=float)
+        threshold = float(np.percentile(arr, 45))
+        active_idx = [i + 1 for i, value in enumerate(activity) if value >= threshold]
+        active_stats: dict[str, object] = {
+            "活跃阈值": round(threshold, 2),
+            "活跃帧数": len(active_idx),
+            "占比": round(len(active_idx) / max(len(times), 1), 3),
+        }
+        for side in ("A", "B"):
+            flags = [seen[side][i] for i in active_idx]
+            active_stats[side] = round(sum(flags) / max(len(flags), 1), 4)
+        active_stats["两侧同时"] = round(
+            sum(1 for i in active_idx if seen["A"][i] and seen["B"][i]) / max(len(active_idx), 1), 4)
+        stats["活跃帧检出率"] = active_stats
     (out_dir / "coverage.json").write_text(
         json.dumps(stats, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(stats, ensure_ascii=False, indent=2))
