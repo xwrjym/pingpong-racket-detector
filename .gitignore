@@ -1,0 +1,20 @@
+﻿# 数据与训练产物（体积大、含真人视频，不进仓库）
+data/
+runs/
+weights/
+*.pt
+*.onnx
+*.mp4
+*.cache
+
+# 标注与配置缓存
+.ultralytics/
+__pycache__/
+*.pyc
+
+# 报告里的中间产物，只保留交付用的 md 与少量图片
+reports/*
+!reports/球拍检测_交付报告.md
+!reports/demo_v8_frame_12s.jpg
+!reports/demo_v8_frame_42s.jpg
+!reports/球拍检测模型_v1_评估报告.md

@@ -1,0 +1,15 @@
+# 训练与推理（用户机器上安装；沙箱内无外网装不了）
+ultralytics>=8.2
+torch>=2.1
+torchvision>=0.16
+opencv-python-headless>=4.8
+imageio-ffmpeg>=0.4.9
+
+# 预标注与数据
+numpy>=1.24
+Pillow>=10.0
+scikit-image>=0.22
+scipy>=1.10
+
+# 板端 / 无 ultralytics 推理
+onnxruntime>=1.16

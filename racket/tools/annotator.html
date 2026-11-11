@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>球拍标注复核</title>
+<style>
+  :root { --bg:#0d1117; --panel:#161b22; --line:#30363d; --text:#e6edf3; --muted:#8b949e;
+          --a:#4ade80; --b:#60a5fa; --u:#a1a1aa; --gold:#f5c451; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font:14px/1.5 "Segoe UI","Microsoft YaHei",sans-serif; display:flex; height:100vh; }
+  #stage { flex:1; position:relative; display:flex; align-items:center; justify-content:center;
+           overflow:hidden; background:#05070a; }
+  canvas { cursor: crosshair; }
+  #side { width:300px; background:var(--panel); border-left:1px solid var(--line);
+          padding:16px; display:flex; flex-direction:column; gap:12px; overflow-y:auto; }
+  h1 { font-size:15px; margin:0 0 4px; letter-spacing:.5px; }
+  .muted { color:var(--muted); font-size:12px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; }
+  button { background:#21262d; color:var(--text); border:1px solid var(--line);
+           border-radius:6px; padding:7px 11px; cursor:pointer; font-size:13px; }
+  button:hover { background:#30363d; }
+  button.primary { background:#1f6feb; border-color:#1f6feb; }
+  button.danger { border-color:#7d2b2b; color:#ff9b9b; }
+  button.side-a { border-color:var(--a); color:var(--a); }
+  button.side-b { border-color:var(--b); color:var(--b); }
+  kbd { background:#21262d; border:1px solid var(--line); border-radius:4px;
+        padding:1px 5px; font-size:11px; }
+  #list { border:1px solid var(--line); border-radius:6px; max-height:210px; overflow-y:auto; }
+  .item { padding:6px 8px; border-bottom:1px solid var(--line); cursor:pointer; font-size:12px; }
+  .item:last-child { border-bottom:none; }
+  .item.sel { background:#1f6feb33; }
+  .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; }
+  #toast { position:absolute; left:50%; bottom:24px; transform:translateX(-50%);
+           background:#1f6feb; color:#fff; padding:6px 14px; border-radius:999px;
+           opacity:0; transition:opacity .2s; pointer-events:none; font-size:13px; }
+  #toast.show { opacity:1; }
+  input[type=number] { width:80px; background:#0d1117; color:var(--text);
+                       border:1px solid var(--line); border-radius:6px; padding:6px; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="cv"></canvas>
+  <div id="toast"></div>
+</div>
+<div id="side">
+  <div>
+    <h1>球拍标注复核</h1>
+    <div class="muted" id="meta">加载中…</div>
+  </div>
+
+  <div class="row">
+    <button id="prev">← 上一帧</button>
+    <button id="next">下一帧 →</button>
+    <button id="save" class="primary">保存</button>
+  </div>
+
+  <div class="row">
+    <label class="muted">跳到</label>
+    <input type="number" id="jump" min="1" value="1" />
+    <button id="go">Go</button>
+  </div>
+
+  <div class="muted">选中框的侧别</div>
+  <div class="row">
+    <button class="side-a" data-side="A">A 左半台</button>
+    <button class="side-b" data-side="B">B 右半台</button>
+    <button data-side="UNKNOWN">未知</button>
+  </div>
+
+  <div class="row">
+    <button id="occl">标记遮挡</button>
+    <button id="del" class="danger">删除选中</button>
+    <button id="clear" class="danger">本帧无球拍</button>
+  </div>
+
+  <div class="muted">当前帧的框</div>
+  <div id="list"></div>
+
+  <div class="muted">
+    拖拽空白处画框；点框选中后可拖动。<br />
+    快捷键：<kbd>1</kbd> A　<kbd>2</kbd> B　<kbd>3</kbd> 未知　
+    <kbd>Delete</kbd> 删除　<kbd>N</kbd> 下一帧　<kbd>P</kbd> 上一帧　
+    <kbd>S</kbd> 保存
+  </div>
+</div>
+
+<script>
+const COLORS = { A:'#4ade80', B:'#60a5fa', UNKNOWN:'#a1a1aa' };
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const toastEl = document.getElementById('toast');
+
+let frames = [], idx = 0, boxes = [], sel = -1, img = null;
+let view = { scale:1, ox:0, oy:0 };
+let drag = null, dirty = false, lastSide = 'A';
+
+function toast(msg) {
+  toastEl.textContent = msg;
+  toastEl.classList.add('show');
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => toastEl.classList.remove('show'), 1400);
+}
+
+async function boot() {
+  const res = await fetch('/api/frames');
+  const data = await res.json();
+  frames = data.frames || [];
+  if (!frames.length) { document.getElementById('meta').textContent = '标注文件是空的'; return; }
+  show(0);
+}
+
+function current() { return frames[idx]; }
+
+function show(i) {
+  idx = Math.max(0, Math.min(frames.length - 1, i));
+  const f = current();
+  boxes = f.boxes.map(b => ({ bbox_xyxy: b.bbox_xyxy ? [...b.bbox_xyxy] : null,
+                              side: b.side, visible: b.visible, hard: [...(b.hard || [])] }));
+  sel = -1; dirty = false;
+  document.getElementById('jump').value = idx + 1;
+  document.getElementById('meta').innerHTML =
+    `<b>${idx + 1}</b> / ${frames.length}　场次 ${f.session_id}　帧 ${f.frame_id}` +
+    `<br/>时间 ${f.timestamp_s.toFixed(3)} s　尺寸 ${f.image_size.join('×')}`;
+  img = new Image();
+  img.onload = () => { layout(); draw(); };
+  img.src = '/api/image?i=' + idx;
+  renderList();
+}
+
+function layout() {
+  const stage = document.getElementById('stage');
+  const pad = 24;
+  const maxW = stage.clientWidth - pad, maxH = stage.clientHeight - pad;
+  if (!img) return;
+  const scale = Math.min(maxW / img.width, maxH / img.height);
+  cv.width = Math.round(img.width * scale);
+  cv.height = Math.round(img.height * scale);
+  view = { scale, ox: 0, oy: 0 };
+}
+
+function toImage(ev) {
+  const rect = cv.getBoundingClientRect();
+  return { x: (ev.clientX - rect.left) / view.scale, y: (ev.clientY - rect.top) / view.scale };
+}
+
+function draw() {
+  if (!img) return;
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  ctx.drawImage(img, 0, 0, cv.width, cv.height);
+  ctx.lineWidth = 2;
+  ctx.font = '13px "Segoe UI", sans-serif';
+  boxes.forEach((b, i) => {
+    if (!b.bbox_xyxy) return;
+    const [x1, y1, x2, y2] = b.bbox_xyxy;
+    const X = x1 * view.scale, Y = y1 * view.scale;
+    const W = (x2 - x1) * view.scale, H = (y2 - y1) * view.scale;
+    const color = COLORS[b.side] || COLORS.UNKNOWN;
+    ctx.strokeStyle = color;
+    ctx.globalAlpha = b.visible ? 1 : 0.45;
+    ctx.strokeRect(X, Y, W, H);
+    if (i === sel) {
+      ctx.globalAlpha = 1;
+      ctx.lineWidth = 3;
+      ctx.strokeRect(X - 2, Y - 2, W + 4, H + 4);
+      ctx.lineWidth = 2;
+    }
+    const label = b.side + (b.hard.includes('occluded') ? ' 遮挡' : '');
+    const tw = ctx.measureText(label).width + 10;
+    ctx.globalAlpha = 0.85;
+    ctx.fillStyle = color;
+    ctx.fillRect(X, Math.max(0, Y - 20), tw, 18);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#0d1117';
+    ctx.fillText(label, X + 5, Math.max(13, Y - 7));
+  });
+  if (drag && drag.mode === 'new' && drag.cur) {
+    const [x1, y1, x2, y2] = normalize(drag.start, drag.cur);
+    ctx.setLineDash([6, 4]);
+    ctx.strokeStyle = '#f5c451';
+    ctx.strokeRect(x1 * view.scale, y1 * view.scale,
+                   (x2 - x1) * view.scale, (y2 - y1) * view.scale);
+    ctx.setLineDash([]);
+  }
+}
+
+function normalize(a, b) {
+  return [Math.min(a.x, b.x), Math.min(a.y, b.y), Math.max(a.x, b.x), Math.max(a.y, b.y)];
+}
+
+function hit(pt) {
+  for (let i = boxes.length - 1; i >= 0; i--) {
+    const b = boxes[i];
+    if (!b.bbox_xyxy) continue;
+    const [x1, y1, x2, y2] = b.bbox_xyxy;
+    if (pt.x >= x1 && pt.x <= x2 && pt.y >= y1 && pt.y <= y2) return i;
+  }
+  return -1;
+}
+
+cv.addEventListener('mousedown', ev => {
+  const pt = toImage(ev);
+  const h = hit(pt);
+  if (h >= 0) {
+    sel = h;
+    drag = { mode: 'move', start: pt, orig: [...boxes[h].bbox_xyxy] };
+  } else {
+    sel = -1;
+    drag = { mode: 'new', start: pt, cur: pt };
+  }
+  renderList(); draw();
+});
+
+cv.addEventListener('mousemove', ev => {
+  if (!drag) return;
+  const pt = toImage(ev);
+  if (drag.mode === 'new') { drag.cur = pt; }
+  else if (drag.mode === 'move') {
+    const dx = pt.x - drag.start.x, dy = pt.y - drag.start.y;
+    const [x1, y1, x2, y2] = drag.orig;
+    boxes[sel].bbox_xyxy = [x1 + dx, y1 + dy, x2 + dx, y2 + dy];
+    dirty = true;
+  }
+  draw();
+});
+
+window.addEventListener('mouseup', ev => {
+  if (!drag) return;
+  if (drag.mode === 'new' && drag.cur) {
+    const [x1, y1, x2, y2] = normalize(drag.start, drag.cur);
+    if (x2 - x1 > 8 && y2 - y1 > 8) {
+      const cx = (x1 + x2) / 2;
+      // 侧别一律按物理半台自动判：换边后同一支球拍会换边，靠位置才不会标错
+      const side = cx < current().image_size[0] / 2 ? 'A' : 'B';
+      boxes.push({ bbox_xyxy: [clampX(x1), clampY(y1), clampX(x2), clampY(y2)],
+                   side, visible: true, hard: [] });
+      sel = boxes.length - 1;
+      dirty = true;
+      toast(`侧别已按位置判为 ${side}`);
+    }
+  }
+  drag = null;
+  renderList(); draw();
+});
+
+function clampX(v) {
+  const w = current().image_size[0];
+  return Math.max(0, Math.min(v, w));
+}
+function clampY(v) {
+  const h = current().image_size[1];
+  return Math.max(0, Math.min(v, h));
+}
+
+document.getElementById('prev').onclick = () => nav(-1);
+document.getElementById('next').onclick = () => nav(1);
+document.getElementById('save').onclick = () => save();
+document.getElementById('go').onclick = () => {
+  const v = parseInt(document.getElementById('jump').value, 10);
+  if (!isNaN(v)) { save(); show(v - 1); }
+};
+document.querySelectorAll('[data-side]').forEach(btn => {
+  btn.onclick = () => {
+    if (sel < 0) { lastSide = btn.dataset.side; toast('新画的框将标为 ' + lastSide); return; }
+    boxes[sel].side = btn.dataset.side;
+    dirty = true; renderList(); draw();
+  };
+});
+document.getElementById('del').onclick = () => {
+  if (sel < 0) { toast('先选中一个框'); return; }
+  boxes.splice(sel, 1); sel = -1; dirty = true; renderList(); draw();
+};
+document.getElementById('occl').onclick = () => {
+  if (sel < 0) { toast('先选中一个框'); return; }
+  const b = boxes[sel];
+  b.hard = b.hard.includes('occluded') ? b.hard.filter(t => t !== 'occluded')
+                                       : [...b.hard, 'occluded'];
+  dirty = true; renderList(); draw();
+};
+document.getElementById('clear').onclick = () => {
+  boxes = []; sel = -1; dirty = true; renderList(); draw();
+  toast('本帧已清空，记得保存');
+};
+
+function nav(step) {
+  // 翻页一律保存：保存即标记 reviewed，空帧才会被当成真正的负样本
+  save().catch(() => {});
+  show(idx + step);
+}
+
+async function save() {
+  const res = await fetch('/api/save', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ index: idx, boxes })
+  });
+  if (res.ok) { dirty = false; toast('已保存'); }
+  else { const e = await res.json(); toast('保存失败：' + (e.error || res.status)); }
+}
+
+window.addEventListener('keydown', ev => {
+  if (ev.target.tagName === 'INPUT') return;
+  const k = ev.key.toLowerCase();
+  if (k === '1' || k === 'a') setSide('A');
+  else if (k === '2' || k === 'b') setSide('B');
+  else if (k === '3' || k === 'u') setSide('UNKNOWN');
+  else if (k === 'delete' || k === 'backspace') document.getElementById('del').click();
+  else if (k === 'n' || k === 'arrowright') nav(1);
+  else if (k === 'p' || k === 'arrowleft') nav(-1);
+  else if (k === 's') save();
+});
+
+function setSide(side) {
+  if (sel < 0) { toast('先选中一个框；新框的侧别会自动按位置判定'); return; }
+  boxes[sel].side = side; dirty = true; renderList(); draw();
+}
+
+function renderList() {
+  const el = document.getElementById('list');
+  el.innerHTML = boxes.map((b, i) => {
+    const color = COLORS[b.side] || COLORS.UNKNOWN;
+    const pos = b.bbox_xyxy ? b.bbox_xyxy.map(v => Math.round(v)).join(', ') : '—';
+    const tag = b.hard.includes('occluded') ? '　遮挡' : '';
+    return `<div class="item ${i === sel ? 'sel' : ''}" data-i="${i}">
+      <span class="dot" style="background:${color}"></span>${b.side}${tag}
+      <div class="muted">${pos}</div></div>`;
+  }).join('') || '<div class="item muted">这一帧没有框</div>';
+  el.querySelectorAll('.item[data-i]').forEach(node => {
+    node.onclick = () => { sel = parseInt(node.dataset.i, 10); renderList(); draw(); };
+  });
+}
+
+window.addEventListener('resize', () => { layout(); draw(); });
+boot();
+</script>
+</body>
+</html>
