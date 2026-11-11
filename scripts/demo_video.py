@@ -37,6 +37,8 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--conf", type=float, default=0.25)
     parser.add_argument("--imgsz", type=int, default=640)
     parser.add_argument("--crf", type=int, default=23, help="转码质量，越小越清晰")
+    parser.add_argument("--hud", action="store_true",
+                        help="画面底部显示两侧检出状态与累计漏检时长")
     args = parser.parse_args(argv)
 
     import cv2
@@ -68,6 +70,7 @@ def main(argv: list[str]) -> int:
     index = begin
     written = 0
     hits = 0
+    last_seen: dict[str, float] = {}
     started = time.time()
     while index < finish:
         ok, frame = cap.read()
@@ -89,6 +92,25 @@ def main(argv: list[str]) -> int:
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, (17, 17, 13), 2, cv2.LINE_AA)
             cv2.putText(frame, f"t={ts:6.2f}s  frame={index:6d}", (24, 46),
                         cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2, cv2.LINE_AA)
+
+            if args.hud:
+                # 两侧状态条：直接用来看"这一拍有没有球拍证据"
+                present = {o.side for o in visible}
+                for k, side in enumerate(("A", "B")):
+                    ok_side = side in present
+                    color = (136, 255, 34) if ok_side else (60, 60, 235)
+                    x0 = 24 + k * 260
+                    cv2.rectangle(frame, (x0, height - 66), (x0 + 244, height - 18), color, -1)
+                    text = f"{side} {'检出' if ok_side else '漏检'}"
+                    if not ok_side:
+                        last = last_seen.get(side)
+                        if last is not None and ts - last >= 0.5:
+                            text += f" {ts - last:.1f}s"
+                    cv2.putText(frame, text, (x0 + 10, height - 31),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (17, 17, 13), 2, cv2.LINE_AA)
+                for side in ("A", "B"):
+                    if side in present:
+                        last_seen[side] = ts
             writer.write(frame)
             written += 1
             if written % 300 == 0:
