@@ -90,15 +90,17 @@ $PY = "D:\racket-env\Scripts\python.exe"
 
 ## 5. 推理与接入
 
+**推荐配置：`weights/racket_v11_两场地.pt` + imgsz 1280 + conf 0.5**（覆盖两家球馆，含 v8 权重仅用于对照）。
+
 ```python
 from racket.adapter import AdapterConfig, ProposalGate, RacketAdapter
 from racket.detectors import YoloRacketDetector
 from racket.schema import ObservationLog
 
-detector = YoloRacketDetector(r"runs/racket_v0.1/weights/best.pt")
+detector = YoloRacketDetector(r"weights/racket_v11_两场地.pt", imgsz=1280, conf_thr=0.5)
 adapter = RacketAdapter(
     detector,
-    AdapterConfig(session_id="s01", source="racket_model_a", model_version="racket_v0.1"),
+    AdapterConfig(session_id="s01", source="racket_model_a", model_version="racket_v1.0", conf_thr=0.5),
     gate=ProposalGate([(15.0, 15.6)]),          # TrackNet 提议区间，可留空=全程
     log=ObservationLog("runtime/racket_obs.jsonl", truncate=True),
 )

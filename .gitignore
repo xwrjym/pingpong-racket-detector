@@ -21,5 +21,5 @@ reports/*
 
 # 交付权重：唯一允许进仓库的 .pt（6 MB），其余仍排除
 !weights/racket_v8_960.pt
-
+!weights/racket_v11_两场地.pt
 
