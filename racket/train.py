@@ -43,6 +43,7 @@ def build_yolo_dataset(
     allow_time_split: bool = True,
     split_mode: str = "time",
     background_dir: str | Path | None = None,
+    test_session: str | None = None,
 ) -> dict[str, Any]:
     """准备 YOLO 数据集。
 
@@ -65,7 +66,8 @@ def build_yolo_dataset(
     if split_mode == "cross":
         # 显式要求跨场次时，必须优先于"按场次三分"：否则 3 个场次会被切成
         # 1 训练 + 1 验证 + 1 测试，训练数据只剩一场，和预期完全不同。
-        train, val, test = split_cross_session(frames, val_ratio=0.15)
+        train, val, test = split_cross_session(frames, val_ratio=0.15,
+                                               test_session=test_session)
         leakage = False
     else:
         try:
