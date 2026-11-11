@@ -1,5 +1,7 @@
 # 球拍检测模型（独立工程）
 
+仓库：https://github.com/xwrjym/pingpong-racket-detector
+
 对应方案：`球拍检测模型独立方案.md`。本工程实现方案里的 **路线 A：独立球拍模型 + 独立适配器 + Proposal 区间触发**，
 不改球模型、不改计分状态机；球拍证据只交给融合层做 `HIT_CANDIDATE`，最终判分仍由现有状态机负责。
 
