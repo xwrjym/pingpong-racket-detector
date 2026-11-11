@@ -190,7 +190,10 @@ def evaluate(weights: str | Path, data_yaml: str | Path, *, split: str = "test",
     }
     names = getattr(model, "names", {}) or {}
     per_class = {}
-    for i, ap in enumerate(getattr(metrics.box, "ap50", []) or []):
+    ap50 = getattr(metrics.box, "ap50", None)
+    # numpy 数组不能直接做布尔判断（"or []" 会抛 ValueError）
+    ap50_list = list(ap50) if ap50 is not None else []
+    for i, ap in enumerate(ap50_list):
         per_class[str(names.get(i, i))] = float(ap)
     summary["ap50_per_class"] = per_class
     return summary
