@@ -19,11 +19,12 @@ from typing import Any, Iterable, Iterator, Literal
 SCHEMA_VERSION = "racket.v1"
 
 SIDES: tuple[str, ...] = ("A", "B", "UNKNOWN")
-STATUSES: tuple[str, ...] = ("ok", "occluded", "lost", "low_conf")
+#: predicted = 该帧没有检测，由跟踪器外推补位（低置信证据，下游应降权）
+STATUSES: tuple[str, ...] = ("ok", "occluded", "lost", "low_conf", "predicted")
 DECISIONS: tuple[str, ...] = ("candidate", "confirmed", "rejected", "pending")
 
 Side = Literal["A", "B", "UNKNOWN"]
-Status = Literal["ok", "occluded", "lost", "low_conf"]
+Status = Literal["ok", "occluded", "lost", "low_conf", "predicted"]
 BBox = tuple[float, float, float, float]
 
 #: 判定一个 bbox 是否"在图像内"时允许的亚像素误差

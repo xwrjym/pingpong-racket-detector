@@ -31,6 +31,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--conf", type=float, default=0.5)
     parser.add_argument("--imgsz", type=int, default=960)
     parser.add_argument("--out", default="reports/coverage_test1")
+    parser.add_argument("--predict", action="store_true", help="启用短时外推补位")
     args = parser.parse_args(argv)
 
     import cv2
@@ -48,7 +49,7 @@ def main(argv: list[str]) -> int:
 
     detector = YoloRacketDetector(args.weights, DetectorConfig(conf_thr=args.conf,
                                                                imgsz=args.imgsz, device="0"))
-    adapter = RacketAdapter(detector, AdapterConfig(session_id="s01", conf_thr=args.conf))
+    adapter = RacketAdapter(detector, AdapterConfig(session_id="s01", conf_thr=args.conf, predict_missing=args.predict))
 
     times: list[float] = []
     seen: dict[str, list[bool]] = {"A": [], "B": []}
@@ -157,3 +158,4 @@ def main(argv: list[str]) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv[1:]))
+

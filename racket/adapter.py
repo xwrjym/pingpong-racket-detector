@@ -51,6 +51,13 @@ class AdapterConfig:
     confirm_hits: int = 1
     #: 是否输出"这一帧没看到球拍"的 visible=False 观测
     emit_lost_frames: bool = True
+    #: 短暂漏检时用跟踪器外推补位，输出 status="predicted" 的低置信观测。
+    #: 击球瞬间常只有 1~2 帧丢检，补位能显著提高"击球时有没有球拍证据"的覆盖。
+    predict_missing: bool = False
+    #: 最多外推几帧；超过就认为真的跟丢了
+    predict_max_gap: int = 3
+    #: 每外推一帧置信度衰减系数
+    predict_decay: float = 0.75
     tracker: TrackerConfig = field(default_factory=TrackerConfig)
 
 
@@ -93,6 +100,7 @@ class RacketAdapter:
         self.dropped_outside = 0
         self.dropped_same_side = 0
         self.pending_tracks = 0
+        self._last_conf: dict[str, float] = {}
         self._last_observations: list[RacketObservation] = []
 
     # ------------------------------------------------------------------ 单帧
@@ -117,6 +125,10 @@ class RacketAdapter:
         observations: list[RacketObservation] = []
         for state in states:
             if state.status == "occluded":
+                predicted = self._predict(state, timestamp_s, image_size)
+                if predicted is not None:
+                    observations.append(predicted)
+                    continue
                 if cfg.emit_lost_frames:
                     observations.append(RacketObservation.lost(
                         session_id=cfg.session_id,
@@ -138,6 +150,8 @@ class RacketAdapter:
                 self.pending_tracks += 1
                 continue
             observations.append(self._build(state, frame_id, timestamp_s, image_size))
+            if state.confidence is not None:
+                self._last_conf[state.track_id] = float(state.confidence)
 
         self.frames_processed += 1
         self._last_observations = observations
@@ -201,6 +215,58 @@ class RacketAdapter:
         kept = kept[: cfg.max_boxes]
         self.detections_used += len(kept)
         return kept
+
+    def _predict(
+        self,
+        state: Any,
+        timestamp_s: float,
+        image_size: tuple[int, int],
+    ) -> RacketObservation | None:
+        """用上一帧的框 + 速度外推，补上这一帧的漏检。
+
+        只在 1~3 帧的短暂丢检内启用：击球瞬间球拍常被身体或球台挡住一两帧，
+        补位能让"击球时刻是否拿到球拍证据"的覆盖率明显提高。
+        输出 status="predicted"，下游应据此降权。
+        """
+        cfg = self.config
+        if not cfg.predict_missing:
+            return None
+        if state.silent_frames > cfg.predict_max_gap:
+            return None
+        if state.last_bbox is None or state.last_timestamp_s is None:
+            return None
+        last_conf = self._last_conf.get(state.track_id)
+        if last_conf is None:
+            return None
+
+        dt = max(timestamp_s - state.last_timestamp_s, 0.0)
+        vx, vy = state.velocity_px_s
+        x1, y1, x2, y2 = state.last_bbox
+        dx, dy = vx * dt, vy * dt
+        bbox = clip_bbox((x1 + dx, y1 + dy, x2 + dx, y2 + dy),
+                         image_size[0], image_size[1])
+        if bbox[2] - bbox[0] < 4 or bbox[3] - bbox[1] < 4:
+            return None
+        confidence = last_conf * (cfg.predict_decay ** state.silent_frames)
+        if confidence < 0.05:
+            return None
+        try:
+            return RacketObservation(
+                session_id=cfg.session_id,
+                frame_id=state.frame_id,
+                timestamp_s=timestamp_s,
+                side=state.side if state.side in ("A", "B") else "UNKNOWN",
+                bbox_xyxy=bbox,
+                confidence=confidence,
+                track_id=state.track_id,
+                status="predicted",
+                visible=True,
+                source=cfg.source,
+                model_version=cfg.model_version,
+                image_size=image_size,
+            )
+        except SchemaError:
+            return None
 
     def _build(
         self,

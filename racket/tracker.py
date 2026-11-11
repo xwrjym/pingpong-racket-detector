@@ -51,6 +51,9 @@ class TrackState:
     age: int = 0
     silent_frames: int = 0
     predicted: bool = False
+    #: 上一帧真实框与时间，供适配器在短暂漏检时外推补位
+    last_bbox: BBox | None = None
+    last_timestamp_s: float | None = None
 
     @property
     def visible(self) -> bool:
@@ -276,6 +279,8 @@ class RacketTracker:
             hits=track.hits,
             age=track.age,
             silent_frames=track.silent_frames,
+            last_bbox=track.bbox,
+            last_timestamp_s=track.last_timestamp_s,
         )
 
     def active_tracks(self) -> dict[str, str]:
